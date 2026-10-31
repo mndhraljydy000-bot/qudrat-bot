@@ -24,19 +24,27 @@ except Exception as e:
 
 # --- دوال مساعدة ---
 def generate_gemini_response(prompt: str) -> str:
-    """توليد رد باستخدام Gemini مع طباعة الخطأ الحقيقي في السجلات إن وجد."""
+    """توليد رد باستخدام Gemini مع تنظيف شامل للرموز الخاصة."""
     try:
-        # استخدام النموذج المستقر والمعتمد رسميا gemini-1.5-flash (أو gemini-2.0-flash)
         response = genai_client.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt,
         )
         text = response.text if response and response.text else "عذراً، لم أتمكن من صياغة إجابة."
-        return text.encode('utf-8', errors='ignore').decode('utf-8')
+        
+        # تنظيف أي رموز خاصة قد تسبب مشاكل ترميز واستبدالها برموز آمنة
+        clean_text = (
+            text.replace('\u2022', '-')
+                .replace('•', '-')
+                .replace('–', '-')
+                .replace('—', '-')
+        )
+        
+        return clean_text.encode('utf-8', errors='ignore').decode('utf-8')
     except Exception as e:
-        # طباعة الخطأ التفصيلي في سجلات رندر لنعرف السبب الحقيقي فوراً
-        print(f"DETAILED GEMINI ERROR: {str(e)}")
-        return f"عذراً يا منذر، حدث خطأ تقني من جيميناي: {str(e)}"
+        error_str = str(e).encode('utf-8', errors='ignore').decode('utf-8')
+        print(f"DETAILED GEMINI ERROR: {error_str}")
+        return f"عذراً يا منذر، حدث خطأ تقني: {error_str}"
 
 # --- معالجات الرسائل ---
 @bot.message_handler(commands=['start', 'help'])
