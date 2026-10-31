@@ -1,9 +1,27 @@
 import os
 import sys
 
-# 🟢 الحل الجذري لترميز السجلات في Render
+# (اختياري) تأكيد ترميز الإخراج القياسي
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
+# --- اعتراض httpx لاستخدام utf-8 في ترميز الرؤوس ---
+import httpx
+try:
+    from httpx._utils import normalize_header_value as _orig_normalize
+
+    def _utf8_normalize_header_value(value, encoding=None, lower=False):
+        """نسخة معدلة تفرض utf-8 بدلاً من ascii"""
+        return _orig_normalize(value, encoding='utf-8', lower=lower)
+
+    httpx._utils.normalize_header_value = _utf8_normalize_header_value
+    # إعادة ربط الدالة داخل الوحدات التي استوردتها مسبقاً
+    import httpx._models
+    if hasattr(httpx._models, 'normalize_header_value'):
+        httpx._models.normalize_header_value = _utf8_normalize_header_value
+    print("✅ httpx header encoding patched to UTF-8")
+except Exception as e:
+    print(f"⚠️ Could not patch httpx header encoding: {e}")
 
 import telebot
 from flask import Flask, request, abort
@@ -27,35 +45,37 @@ try:
 except Exception as e:
     print(f"Error initializing GenAI Client: {e}")
 
-def sanitize_arabic_text(text: str) -> str:
+# --- دالة آمنة لاستدعاء Gemini ---
+def safe_generate_content(prompt: str) -> str:
     """
-    تنظيف النص واستبدال الرموز الخاصة التي تسبب مشاكل ترميز (مثل النقاط)
-    بشرطات آمنة 100%، مع الحفاظ الكامل على الحروف العربية.
+    تلتف حول generate_content لضمان عدم تسرب أي استثناء ترميز.
     """
-    if not text:
-        return "عذراً، لم أتمكن من صياغة إجابة."
-    
-    # استبدال الرمز المزعج برموز ASCII آمنة تماماً
-    cleaned = (
-        text.replace('\u2022', '-')
-        .replace('•', '-')
-        .replace('–', '-')
-        .replace('—', '-')
-    )
-    return cleaned
-
-def generate_gemini_response(prompt: str) -> str:
     try:
         response = genai_client.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt,
         )
-        raw_text = response.text if response and response.text else "عذراً، لم أتمكن من صياغة إجابة."
-        return sanitize_arabic_text(raw_text)
+        raw = response.text if response and getattr(response, "text", None) else ""
+        return raw if raw else "عذراً، لم أتمكن من صياغة إجابة."
+    except UnicodeEncodeError as ue:
+        print(f"UnicodeEncodeError inside Gemini SDK: {ue}")
+        return "عذراً، واجهت مشكلة في ترميز النص. حاول مرة أخرى."
     except Exception as e:
-        error_str = str(e)
-        print(f"DETAILED GEMINI ERROR: {error_str}")
-        return f"عذراً يا منذر، حدث خطأ تقني: {error_str}"
+        err = str(e)
+        print(f"General Gemini Error: {err}")
+        return f"عذراً، حدث خطأ تقني: {err[:120]}"
+
+def sanitize_arabic_text(text: str) -> str:
+    """
+    تنظيف النص مع الحفاظ على الحروف العربية وكل محارف UTF-8.
+    """
+    if not text:
+        return "عذراً، لم أتمكن من صياغة إجابة."
+    return text.replace('\u2022', '•')
+
+def generate_gemini_response(prompt: str) -> str:
+    raw = safe_generate_content(prompt)
+    return sanitize_arabic_text(raw)
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
