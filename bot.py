@@ -1,27 +1,13 @@
 import os
 import sys
+import requests
 
-# 🟢 إعادة تهيئة تدفقات الإخراج لمنع أخطاء السجلات
+# 🟢 إجبار تدفقات الإخراج على UTF-8
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-# --- اعتراض httpx لتجنب أخطاء ترميز الرؤوس ---
-import httpx
-try:
-    from httpx._utils import normalize_header_value as _orig_normalize
-    def _utf8_normalize_header_value(value, encoding=None, lower=False):
-        return _orig_normalize(value, encoding='utf-8', lower=lower)
-    httpx._utils.normalize_header_value = _utf8_normalize_header_value
-    import httpx._models
-    if hasattr(httpx._models, 'normalize_header_value'):
-        httpx._models.normalize_header_value = _utf8_normalize_header_value
-except Exception as e:
-    print(f"Patch warning: {e}")
-
 import telebot
 from flask import Flask, request, abort
-from google import genai
-from google.genai import types  # للتحكم في نوع الاستجابة ومحددات التكوين
 from waitress import serve
 
 # --- الإعدادات الأساسية ---
@@ -36,83 +22,68 @@ if not BOT_TOKEN or not GEMINI_API_KEY:
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
 
-try:
-    genai_client = genai.Client(api_key=GEMINI_API_KEY)
-except Exception as e:
-    print(f"Error initializing GenAI Client: {e}")
-
-# --- الطبقة الثالثة: التنظيف البرمجي الآمن (Safety Net) ---
-def sanitize_response_safely(text: str) -> str:
+def generate_gemini_response(prompt: str) -> str:
     """
-    لا تحذف الحروف العربية، بل تستبدل أي رمز نقطة قديم أو شاذ بشرطة آمنة.
+    استدعاء Gemini REST API مباشرة لتجنب أي مشاكل ترميز داخل مكتبات SDK.
     """
-    if not text:
-        return "عذراً، لم أتمكن من صياغة إجابة."
-    return (
-        text.replace('\u2022', '-')
-            .replace('•', '-')
-            .replace('–', '-')
-            .replace('—', '-')
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     )
-
-# --- استدعاء جيميناي متوافق مع طبقات الحماية ---
-def generate_gemini_response(user_question: str) -> str:
+    
+    # تحسين البرومبت للتركيز على شرح القدرات باللغة العربية
+    full_prompt = (
+        f"{prompt}\n\n"
+        "(أجب باللغة العربية الفصحى بشكل دقيق ومبسط يناسب طلاب اختبار القدرات)."
+    )
+    
+    payload = {
+        "contents": [{"parts": [{"text": full_prompt}]}]
+    }
+    
     try:
-        # الطبقة الأولى: التوجيه الإيجابي في الـ Prompt
-        prompt = f"""
-أنت خبير ذكي ومختص في شرح اختبار القدرات العامة للطلاب.
-أجب عن السؤال التالي باللغة العربية الفصحى وبشكل دقيق ومختصر.
-**قاعدة التنسيق الإلزامية:** استخدم الأرقام (1.، 2.، 3.) أو الشرطات (-) حصراً لأي تعداد، واكتب الإجابة بوضوح وتجنب استخدام الرموز المعقدة.
-
-السؤال: {user_question}
-"""
-
-        # الطبقة الثانية: التحكم في نوع الاستجابة (Plain Text) من خلال GenerationConfig
-        response = genai_client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="text/plain",  # طلب نص عادي لتجنب ماركداوند المعقد
-                temperature=0.3,
-            )
+        # إرسال الطلب مع تحديد الترميز UTF-8 صراحةً
+        response = requests.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=60,
         )
-        
-        raw_text = response.text if response and getattr(response, "text", None) else ""
-        if not raw_text:
-            return "عذراً، لم أتمكن من صياغة إجابة."
-            
-        # تطبيق الطبقة الثالثة (التنظيف الآمن)
-        return sanitize_response_safely(raw_text)
+        response.raise_for_status()
+        data = response.json()
 
-    except UnicodeEncodeError as ue:
-        print(f"CRITICAL UnicodeEncodeError caught: {ue}")
-        return "عذراً يا منذر، واجهت مشكلة تقنية مؤقتة في ترميز النص. الرجاء إعادة إرسال السؤال."
-    except Exception as e:
-        err_msg = str(e)
-        print(f"General Gemini Error: {err_msg}")
-        return f"عذراً يا منذر، حدث خطأ تقني غير متوقع. حاول مرة أخرى."
+        # استخراج النص من بنية الاستجابة JSON
+        candidates = data.get("candidates", [])
+        if candidates and "content" in candidates[0]:
+            parts = candidates[0]["content"].get("parts", [])
+            if parts and "text" in parts[0]:
+                text = parts[0]["text"]
+                # تنظيف آمن لأي رمز نقطة قد يتسرب
+                return text.replace('\u2022', '-').replace('•', '-')
+
+        return "عذراً، لم أتمكن من صياغة إجابة."
+
+    except requests.exceptions.RequestException as e:
+        print(f"Gemini REST API error: {e}")
+        return "عذراً، حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي."
+    except (KeyError, IndexError, ValueError) as e:
+        print(f"Error parsing Gemini response: {e}")
+        return "عذراً، واجهت مشكلة في معالجة الإجابة."
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     bot.reply_to(message, "أهلاً بك يا منذر! بوت القدرات يعمل الآن بكفاءة وبأمان تام باللغة العربية 🚀.")
 
-# --- الطبقة الرابعة: معالجة الأخطاء الشاملة في معالج الرسائل ---
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     try:
         if message.from_user.is_bot:
             return
         bot.send_chat_action(message.chat.id, 'typing')
-        
         response_text = generate_gemini_response(message.text)
         bot.reply_to(message, response_text)
-        
     except Exception as e:
-        print(f"Error handling message wrapper: {e}")
-        try:
-            bot.reply_to(message, "عذراً، حدث خطأ أثناء إرسال الرد.")
-        except:
-            pass
+        print(f"Error handling message: {e}")
 
 @app.route(f"/{WEBHOOK_SECRET}", methods=['POST'])
 def webhook():
