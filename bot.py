@@ -1,31 +1,27 @@
 import os
 import sys
 
-# (اختياري) تأكيد ترميز الإخراج القياسي
+# 🟢 إعادة تهيئة تدفقات الإخراج لمنع أخطاء السجلات
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-# --- اعتراض httpx لاستخدام utf-8 في ترميز الرؤوس ---
+# --- اعتراض httpx لتجنب أخطاء ترميز الرؤوس ---
 import httpx
 try:
     from httpx._utils import normalize_header_value as _orig_normalize
-
     def _utf8_normalize_header_value(value, encoding=None, lower=False):
-        """نسخة معدلة تفرض utf-8 بدلاً من ascii"""
         return _orig_normalize(value, encoding='utf-8', lower=lower)
-
     httpx._utils.normalize_header_value = _utf8_normalize_header_value
-    # إعادة ربط الدالة داخل الوحدات التي استوردتها مسبقاً
     import httpx._models
     if hasattr(httpx._models, 'normalize_header_value'):
         httpx._models.normalize_header_value = _utf8_normalize_header_value
-    print("✅ httpx header encoding patched to UTF-8")
 except Exception as e:
-    print(f"⚠️ Could not patch httpx header encoding: {e}")
+    print(f"Patch warning: {e}")
 
 import telebot
 from flask import Flask, request, abort
 from google import genai
+from google.genai import types  # للتحكم في نوع الاستجابة ومحددات التكوين
 from waitress import serve
 
 # --- الإعدادات الأساسية ---
@@ -45,52 +41,78 @@ try:
 except Exception as e:
     print(f"Error initializing GenAI Client: {e}")
 
-# --- دالة آمنة لاستدعاء Gemini ---
-def safe_generate_content(prompt: str) -> str:
+# --- الطبقة الثالثة: التنظيف البرمجي الآمن (Safety Net) ---
+def sanitize_response_safely(text: str) -> str:
     """
-    تلتف حول generate_content لضمان عدم تسرب أي استثناء ترميز.
-    """
-    try:
-        response = genai_client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
-        )
-        raw = response.text if response and getattr(response, "text", None) else ""
-        return raw if raw else "عذراً، لم أتمكن من صياغة إجابة."
-    except UnicodeEncodeError as ue:
-        print(f"UnicodeEncodeError inside Gemini SDK: {ue}")
-        return "عذراً، واجهت مشكلة في ترميز النص. حاول مرة أخرى."
-    except Exception as e:
-        err = str(e)
-        print(f"General Gemini Error: {err}")
-        return f"عذراً، حدث خطأ تقني: {err[:120]}"
-
-def sanitize_arabic_text(text: str) -> str:
-    """
-    تنظيف النص مع الحفاظ على الحروف العربية وكل محارف UTF-8.
+    لا تحذف الحروف العربية، بل تستبدل أي رمز نقطة قديم أو شاذ بشرطة آمنة.
     """
     if not text:
         return "عذراً، لم أتمكن من صياغة إجابة."
-    return text.replace('\u2022', '•')
+    return (
+        text.replace('\u2022', '-')
+            .replace('•', '-')
+            .replace('–', '-')
+            .replace('—', '-')
+    )
 
-def generate_gemini_response(prompt: str) -> str:
-    raw = safe_generate_content(prompt)
-    return sanitize_arabic_text(raw)
+# --- استدعاء جيميناي متوافق مع طبقات الحماية ---
+def generate_gemini_response(user_question: str) -> str:
+    try:
+        # الطبقة الأولى: التوجيه الإيجابي في الـ Prompt
+        prompt = f"""
+أنت خبير ذكي ومختص في شرح اختبار القدرات العامة للطلاب.
+أجب عن السؤال التالي باللغة العربية الفصحى وبشكل دقيق ومختصر.
+**قاعدة التنسيق الإلزامية:** استخدم الأرقام (1.، 2.، 3.) أو الشرطات (-) حصراً لأي تعداد، واكتب الإجابة بوضوح وتجنب استخدام الرموز المعقدة.
+
+السؤال: {user_question}
+"""
+
+        # الطبقة الثانية: التحكم في نوع الاستجابة (Plain Text) من خلال GenerationConfig
+        response = genai_client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="text/plain",  # طلب نص عادي لتجنب ماركداوند المعقد
+                temperature=0.3,
+            )
+        )
+        
+        raw_text = response.text if response and getattr(response, "text", None) else ""
+        if not raw_text:
+            return "عذراً، لم أتمكن من صياغة إجابة."
+            
+        # تطبيق الطبقة الثالثة (التنظيف الآمن)
+        return sanitize_response_safely(raw_text)
+
+    except UnicodeEncodeError as ue:
+        print(f"CRITICAL UnicodeEncodeError caught: {ue}")
+        return "عذراً يا منذر، واجهت مشكلة تقنية مؤقتة في ترميز النص. الرجاء إعادة إرسال السؤال."
+    except Exception as e:
+        err_msg = str(e)
+        print(f"General Gemini Error: {err_msg}")
+        return f"عذراً يا منذر، حدث خطأ تقني غير متوقع. حاول مرة أخرى."
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     bot.reply_to(message, "أهلاً بك يا منذر! بوت القدرات يعمل الآن بكفاءة وبأمان تام باللغة العربية 🚀.")
 
+# --- الطبقة الرابعة: معالجة الأخطاء الشاملة في معالج الرسائل ---
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     try:
         if message.from_user.is_bot:
             return
         bot.send_chat_action(message.chat.id, 'typing')
+        
         response_text = generate_gemini_response(message.text)
         bot.reply_to(message, response_text)
+        
     except Exception as e:
-        print(f"Error handling message: {e}")
+        print(f"Error handling message wrapper: {e}")
+        try:
+            bot.reply_to(message, "عذراً، حدث خطأ أثناء إرسال الرد.")
+        except:
+            pass
 
 @app.route(f"/{WEBHOOK_SECRET}", methods=['POST'])
 def webhook():
