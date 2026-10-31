@@ -24,35 +24,40 @@ app = Flask(__name__)
 
 def generate_gemini_response(prompt: str) -> str:
     """
-    استدعاء Gemini REST API مباشرة لتجنب أي مشاكل ترميز داخل مكتبات SDK.
+    استدعاء Gemini REST API باستخدام الطريقة الحديثة والنموذج المتاح.
     """
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    )
+    # استخدام النموذج المتاح والمتوافق
+    model_name = "gemini-2.5-flash"
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     
     # تحسين البرومبت للتركيز على شرح القدرات باللغة العربية
     full_prompt = (
         f"{prompt}\n\n"
-        "(أجب باللغة العربية الفصحى بشكل دقيق ومبسط يناسب طلاب اختبار القدرات)."
+        "(أجب باللغة العربية الفصحى بشكل دقيق ومبسط يناسب طلاب اختبار القدرات، وتجنب استخدام الرموز المعقدة)."
     )
     
     payload = {
         "contents": [{"parts": [{"text": full_prompt}]}]
     }
     
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "x-goog-api-key": GEMINI_API_KEY  # الطريقة الموصى بها لإرسال المفتاح
+    }
+    
     try:
-        # إرسال الطلب مع تحديد الترميز UTF-8 صراحةً
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            timeout=60,
-        )
+        # إرسال الطلب
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        
+        # طباعة تفاصيل الاستجابة في السجلات للتشخيص الدقيق
+        print(f"Gemini REST Status: {response.status_code}")
+        print(f"Gemini REST Response: {response.text[:500]}")
+        
         response.raise_for_status()
         data = response.json()
 
-        # استخراج النص من بنية الاستجابة JSON
+        # استخراج النص بأمان من الاستجابة
         candidates = data.get("candidates", [])
         if candidates and "content" in candidates[0]:
             parts = candidates[0]["content"].get("parts", [])
@@ -63,11 +68,14 @@ def generate_gemini_response(prompt: str) -> str:
 
         return "عذراً، لم أتمكن من صياغة إجابة."
 
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Error {response.status_code}: {response.text}")
+        return f"عذراً، حدث خطأ في الخدمة (رمز {response.status_code})."
     except requests.exceptions.RequestException as e:
-        print(f"Gemini REST API error: {e}")
-        return "عذراً، حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي."
+        print(f"RequestException: {e}")
+        return "عذراً، حدث خطأ في الاتصال بالخدمة."
     except (KeyError, IndexError, ValueError) as e:
-        print(f"Error parsing Gemini response: {e}")
+        print(f"Response parsing error: {e}")
         return "عذراً، واجهت مشكلة في معالجة الإجابة."
 
 @bot.message_handler(commands=['start', 'help'])
