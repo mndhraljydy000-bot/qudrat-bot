@@ -12,14 +12,12 @@ RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://qudrat-bot-l22t.onrender.
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# إنشاء البوت بدون خيوط متداخلة ليتوافق مع Flask
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 
 @app.route('/')
 def home():
     return "برنامج Qudrat Bot يعمل بنظام Webhook بنجاح تام!"
 
-# مسار استقبال الرسائل من تيليجرام تلقائياً
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -32,7 +30,7 @@ def webhook():
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "أهلاً بك يا منذر! بوت القدرات يعمل الآن بنظام Webhook السريع والذكي 🚀.")
+    bot.reply_to(message, "أهلاً بك يا منذر[span_0](start_span)[span_0](end_span)! بوت القدرات يعمل بكفاءة تامة بنظام الـ Webhook 🚀.")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -46,7 +44,6 @@ def handle_message(message):
         bot.reply_to(message, f"عذراً يا منذر، حدث خطأ تقني بسيط: {str(e)}")
 
 if __name__ == "__main__":
-    # حذف أي ويبهوك قديم وربط الرابط الجديد مباشرة بتيليجرام
     bot.remove_webhook()
     bot.set_webhook(url=f"{RENDER_URL}/{TELEGRAM_TOKEN}")
     
