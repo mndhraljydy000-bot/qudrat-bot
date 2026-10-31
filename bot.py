@@ -24,17 +24,14 @@ app = Flask(__name__)
 
 def generate_gemini_response(prompt: str) -> str:
     """
-    استدعاء Gemini REST API باستخدام الطريقة الحديثة والنموذج المتاح.
+    استدعاء Gemini REST API مع تفريغ السجلات فوراً لمعرفة أي خلل (إن وجد).
     """
-    # استخدام النموذج المتاح والمتوافق
     model_name = "gemini-2.5-flash"
-    
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     
-    # تحسين البرومبت للتركيز على شرح القدرات باللغة العربية
     full_prompt = (
         f"{prompt}\n\n"
-        "(أجب باللغة العربية الفصحى بشكل دقيق ومبسط يناسب طلاب اختبار القدرات، وتجنب استخدام الرموز المعقدة)."
+        "(أجب باللغة العربية الفصحى بشكل دقيق ومبسط يناسب طلاب اختبار القدرات، وتجنب الرموز المعقدة)."
     )
     
     payload = {
@@ -43,39 +40,39 @@ def generate_gemini_response(prompt: str) -> str:
     
     headers = {
         "Content-Type": "application/json; charset=utf-8",
-        "x-goog-api-key": GEMINI_API_KEY  # الطريقة الموصى بها لإرسال المفتاح
+        "x-goog-api-key": GEMINI_API_KEY
     }
     
     try:
-        # إرسال الطلب
         response = requests.post(url, json=payload, headers=headers, timeout=60)
         
-        # طباعة تفاصيل الاستجابة في السجلات للتشخيص الدقيق
-        print(f"Gemini REST Status: {response.status_code}")
-        print(f"Gemini REST Response: {response.text[:500]}")
+        # ✅ flush=True يضمن ظهور حالة الاستجابة في سجلات Render فوراً
+        print(f"Gemini Status: {response.status_code}", flush=True)
+        print(f"Gemini Body: {response.text[:800]}", flush=True)
         
         response.raise_for_status()
         data = response.json()
 
-        # استخراج النص بأمان من الاستجابة
         candidates = data.get("candidates", [])
         if candidates and "content" in candidates[0]:
             parts = candidates[0]["content"].get("parts", [])
             if parts and "text" in parts[0]:
                 text = parts[0]["text"]
-                # تنظيف آمن لأي رمز نقطة قد يتسرب
                 return text.replace('\u2022', '-').replace('•', '-')
 
         return "عذراً، لم أتمكن من صياغة إجابة."
 
     except requests.exceptions.HTTPError as e:
-        print(f"HTTP Error {response.status_code}: {response.text}")
+        print(f"HTTP Error {response.status_code}: {response.text}", flush=True)
         return f"عذراً، حدث خطأ في الخدمة (رمز {response.status_code})."
+    except requests.exceptions.Timeout:
+        print("Request timed out after 60s", flush=True)
+        return "عذراً، استغرق الطلب وقتاً طويلاً. حاول مرة أخرى."
     except requests.exceptions.RequestException as e:
-        print(f"RequestException: {e}")
+        print(f"RequestException: {e}", flush=True)
         return "عذراً، حدث خطأ في الاتصال بالخدمة."
     except (KeyError, IndexError, ValueError) as e:
-        print(f"Response parsing error: {e}")
+        print(f"Response parsing error: {e}", flush=True)
         return "عذراً، واجهت مشكلة في معالجة الإجابة."
 
 @bot.message_handler(commands=['start', 'help'])
@@ -91,7 +88,7 @@ def handle_message(message):
         response_text = generate_gemini_response(message.text)
         bot.reply_to(message, response_text)
     except Exception as e:
-        print(f"Error handling message: {e}")
+        print(f"Error handling message: {e}", flush=True)
 
 @app.route(f"/{WEBHOOK_SECRET}", methods=['POST'])
 def webhook():
@@ -112,10 +109,10 @@ def index():
 
 def setup_webhook():
     if not RENDER_EXTERNAL_URL:
-        print("RENDER_EXTERNAL_URL not set.")
+        print("RENDER_EXTERNAL_URL not set.", flush=True)
         return
     webhook_url = f"{RENDER_EXTERNAL_URL}/{WEBHOOK_SECRET}"
-    print(f"Setting webhook to: {webhook_url}")
+    print(f"Setting webhook to: {webhook_url}", flush=True)
     bot.remove_webhook()
     bot.set_webhook(
         url=webhook_url,
