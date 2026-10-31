@@ -1,6 +1,6 @@
 import os
 import telebot
-import google.generativeai as genai
+from google import genai
 from flask import Flask, request
 
 app = Flask(__name__)
@@ -9,14 +9,14 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://qudrat-bot-l22t.onrender.com")
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+# تهيئة العميل بالطريقة الحديثة للـ SDK الجديد
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 
 @app.route('/')
 def home():
-    return "برنامج Qudrat Bot يعمل بنظام Webhook بنجاح تام!"
+    return "برنامج Qudrat Bot يعمل بنظام Webhook ومكتبة Google-GenAI الحديثة بنجاح تام!"
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 def webhook():
@@ -30,7 +30,7 @@ def webhook():
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "أهلاً بك يا منذر[span_0](start_span)[span_0](end_span)! بوت القدرات يعمل بكفاءة تامة بنظام الـ Webhook 🚀.")
+    bot.reply_to(message, "أهلاً بك يا منذر! بوت القدرات يعمل الآن بأحدث بنية من Google وجاهز لإجابتك 🚀.")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -38,7 +38,11 @@ def handle_message(message):
         if message.from_user.is_bot:
             return
             
-        response = model.generate_content(message.text)
+        # الطريقة الحديثة لتوليد المحتوى باستخدام المكتبة الجديدة
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=message.text,
+        )
         bot.reply_to(message, response.text)
     except Exception as e:
         bot.reply_to(message, f"عذراً يا منذر، حدث خطأ تقني بسيط: {str(e)}")
