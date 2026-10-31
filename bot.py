@@ -4,14 +4,14 @@ from flask import Flask, request, abort
 from google import genai
 from waitress import serve
 
-# --- الإعدادات الأساسية ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+# --- الإعدادات الأساسية (ندعم الاسمين لتلافي أي خطأ في رندر) ---
+BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")  
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "my-super-secret-path") 
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("BOT_TOKEN and GEMINI_API_KEY must be set")
+    raise ValueError("خطأ: يجب التأكد من ضبط متغيرات البيئة (BOT_TOKEN أو TELEGRAM_TOKEN) و (GEMINI_API_KEY) في لوحة تحكم Render!")
 
 # --- تهيئة العملاء ---
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
@@ -20,13 +20,12 @@ genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- دوال مساعدة ---
 def generate_gemini_response(prompt: str) -> str:
-    """توليد رد باستخدام Gemini."""
+    """توليد رد باستخدام Gemini مع ضمان ترميز نظيف."""
     try:
         response = genai_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
         )
-        # ضمان ترميز نقي لمنع أخطاء الـ ASCII
         text = response.text if response and response.text else "عذراً، لم أتمكن من صياغة إجابة."
         return text.encode('utf-8', errors='ignore').decode('utf-8')
     except Exception as e:
