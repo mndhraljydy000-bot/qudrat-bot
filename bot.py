@@ -1,25 +1,38 @@
 import os
 import telebot
 import google.generativeai as genai
-from flask import Flask
+from flask import Flask, request
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "برنامج Qudrat Bot يعمل الآن بنجاح تام!"
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://qudrat-bot-l22t.onrender.com")
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+# إنشاء البوت بدون خيوط متداخلة ليتوافق مع Flask
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
+
+@app.route('/')
+def home():
+    return "برنامج Qudrat Bot يعمل بنظام Webhook بنجاح تام!"
+
+# مسار استقبال الرسائل من تيليجرام تلقائياً
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "ok", 200
+    else:
+        return "Forbidden", 403
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "أهلاً بك يا منذر! بوت القدرات يعمل الآن وجاهز للإجابة على أسئلتك 🚀.")
+    bot.reply_to(message, "أهلاً بك يا منذر! بوت القدرات يعمل الآن بنظام Webhook السريع والذكي 🚀.")
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -33,17 +46,9 @@ def handle_message(message):
         bot.reply_to(message, f"عذراً يا منذر، حدث خطأ تقني بسيط: {str(e)}")
 
 if __name__ == "__main__":
-    import threading
-    
-    def run_bot():
-        try:
-            # مسح أي اتصال أو ويبهوك قديم معلق في تيليجرام لمنع خطأ 409 نهائياً
-            bot.remove_webhook()
-            bot.infinity_polling(none_stop=True, interval=0, timeout=20, skip_pending=True)
-        except Exception as e:
-            print(f"Polling error: {e}")
-
-    threading.Thread(target=run_bot, daemon=True).start()
+    # حذف أي ويبهوك قديم وربط الرابط الجديد مباشرة بتيليجرام
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{RENDER_URL}/{TELEGRAM_TOKEN}")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
