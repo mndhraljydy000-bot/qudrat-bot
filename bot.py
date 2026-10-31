@@ -1,7 +1,7 @@
 import os
 import sys
 
-# 🟢 الحل الجذري: إعادة تهيئة تدفقات الإخراج إلى UTF-8 لمنع أخطاء ASCII في سجلات Render
+# 🟢 الحل الجذري لترميز السجلات في Render
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
@@ -29,12 +29,16 @@ except Exception as e:
 
 def sanitize_arabic_text(text: str) -> str:
     """
-    تنظيف النص لضمان توافقه التام دون الإضرار باللغة العربية.
+    تنظيف النص واستبدال الرموز الخاصة التي تسبب مشاكل ترميز (مثل النقاط)
+    بشرطات آمنة 100%، مع الحفاظ الكامل على الحروف العربية.
     """
     if not text:
         return "عذراً، لم أتمكن من صياغة إجابة."
+    
+    # استبدال الرمز المزعج برموز ASCII آمنة تماماً
     cleaned = (
-        text.replace('\u2022', '•')
+        text.replace('\u2022', '-')
+        .replace('•', '-')
         .replace('–', '-')
         .replace('—', '-')
     )
