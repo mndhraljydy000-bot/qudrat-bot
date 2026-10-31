@@ -4,33 +4,39 @@ from flask import Flask, request, abort
 from google import genai
 from waitress import serve
 
-# --- الإعدادات الأساسية (ندعم الاسمين لتلافي أي خطأ في رندر) ---
+# --- الإعدادات الأساسية ---
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")  
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "my-super-secret-path") 
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("خطأ: يجب التأكد من ضبط متغيرات البيئة (BOT_TOKEN أو TELEGRAM_TOKEN) و (GEMINI_API_KEY) في لوحة تحكم Render!")
+    raise ValueError("خطأ: يجب التأكد من ضبط متغيرات البيئة في لوحة تحكم Render!")
 
 # --- تهيئة العملاء ---
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+try:
+    genai_client = genai.Client(api_key=GEMINI_API_KEY)
+except Exception as e:
+    print(f"Error initializing GenAI Client: {e}")
 
 # --- دوال مساعدة ---
 def generate_gemini_response(prompt: str) -> str:
-    """توليد رد باستخدام Gemini مع ضمان ترميز نظيف."""
+    """توليد رد باستخدام Gemini مع طباعة الخطأ الحقيقي في السجلات إن وجد."""
     try:
+        # استخدام النموذج المستقر والمعتمد رسميا gemini-1.5-flash (أو gemini-2.0-flash)
         response = genai_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
         )
         text = response.text if response and response.text else "عذراً، لم أتمكن من صياغة إجابة."
         return text.encode('utf-8', errors='ignore').decode('utf-8')
     except Exception as e:
-        print(f"Gemini Error: {e}")
-        return "عذراً، حدث خطأ أثناء معالجة طلبك."
+        # طباعة الخطأ التفصيلي في سجلات رندر لنعرف السبب الحقيقي فوراً
+        print(f"DETAILED GEMINI ERROR: {str(e)}")
+        return f"عذراً يا منذر، حدث خطأ تقني من جيميناي: {str(e)}"
 
 # --- معالجات الرسائل ---
 @bot.message_handler(commands=['start', 'help'])
