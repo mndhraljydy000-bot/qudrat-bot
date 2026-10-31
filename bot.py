@@ -12,7 +12,6 @@ def home():
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# إعداد مفتاح جيميناي بالطريقة المتوافقة تماماً
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
@@ -28,7 +27,6 @@ def handle_message(message):
         if message.from_user.is_bot:
             return
             
-        # توليد الرد من جيميناي
         response = model.generate_content(message.text)
         bot.reply_to(message, response.text)
     except Exception as e:
@@ -39,7 +37,9 @@ if __name__ == "__main__":
     
     def run_bot():
         try:
-            bot.infinity_polling(none_stop=True, interval=0, timeout=20)
+            # مسح أي اتصال أو ويبهوك قديم معلق في تيليجرام لمنع خطأ 409 نهائياً
+            bot.remove_webhook()
+            bot.infinity_polling(none_stop=True, interval=0, timeout=20, skip_pending=True)
         except Exception as e:
             print(f"Polling error: {e}")
 
