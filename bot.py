@@ -10,24 +10,27 @@ import telebot
 from flask import Flask, request, abort
 from waitress import serve
 
-# --- الإعدادات الأساسية ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "my-super-secret-path")
+# --- تنظيف وقراءة متغيرات البيئة بـ strip لمنع أي أسطر جديدة بالخطأ ---
+BOT_TOKEN = (os.environ.get("BOT_TOKEN") or os.environ.get("TELEGRAM_TOKEN") or "").strip()
+GEMINI_API_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
+RENDER_EXTERNAL_URL = (os.environ.get("RENDER_EXTERNAL_URL") or "").strip()
+WEBHOOK_SECRET = (os.environ.get("WEBHOOK_SECRET") or "my-super-secret-path").strip()
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise ValueError("Error: BOT_TOKEN and GEMINI_API_KEY must be set!")
+
+# 🛡️ فحص احترازي لمنع تمرير أسطر جديدة داخل الرؤوس
+if "\n" in BOT_TOKEN or "\r" in BOT_TOKEN or "\n" in GEMINI_API_KEY or "\r" in GEMINI_API_KEY:
+    raise ValueError("CRITICAL: API Key or Token contains newline characters! Please fix in Render Environment.")
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
 
 def generate_gemini_response(prompt: str) -> str:
     """
-    استدعاء Gemini REST API باستخدام النموذج المحدث ومعالجة شاملة للأخطاء.
+    استدعاء Gemini REST API مع التحقق التام من سلامة الاتصال.
     """
-    # ✅ تم التحديث بناءً على توصية ديب سيك لاستخدام نموذج متاح
-    model_name = "gemini-3.5-flash"
+    model_name = "gemini-2.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     
     full_prompt = (
@@ -72,7 +75,6 @@ def generate_gemini_response(prompt: str) -> str:
         print(f"RequestException: {type(e).__name__}: {e}", flush=True)
         return "عذراً، حدث خطأ في الاتصال بالخدمة."
     except Exception as e:
-        # ✅ معالج عام لالتقاط أي استثناء خفي وطباعته في السجلات فوراً
         print(f"UNEXPECTED ERROR: {type(e).__name__}: {e}", flush=True)
         return "عذراً، حدث خطأ غير متوقع."
 
