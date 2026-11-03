@@ -24,9 +24,10 @@ app = Flask(__name__)
 
 def generate_gemini_response(prompt: str) -> str:
     """
-    استدعاء Gemini REST API مع تفريغ السجلات فوراً لمعرفة أي خلل (إن وجد).
+    استدعاء Gemini REST API باستخدام النموذج المحدث ومعالجة شاملة للأخطاء.
     """
-    model_name = "gemini-2.5-flash"
+    # ✅ تم التحديث بناءً على توصية ديب سيك لاستخدام نموذج متاح
+    model_name = "gemini-3.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     
     full_prompt = (
@@ -44,9 +45,8 @@ def generate_gemini_response(prompt: str) -> str:
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response = requests.post(url, json=payload, headers=headers, timeout=(10, 60))
         
-        # ✅ flush=True يضمن ظهور حالة الاستجابة في سجلات Render فوراً
         print(f"Gemini Status: {response.status_code}", flush=True)
         print(f"Gemini Body: {response.text[:800]}", flush=True)
         
@@ -69,11 +69,12 @@ def generate_gemini_response(prompt: str) -> str:
         print("Request timed out after 60s", flush=True)
         return "عذراً، استغرق الطلب وقتاً طويلاً. حاول مرة أخرى."
     except requests.exceptions.RequestException as e:
-        print(f"RequestException: {e}", flush=True)
+        print(f"RequestException: {type(e).__name__}: {e}", flush=True)
         return "عذراً، حدث خطأ في الاتصال بالخدمة."
-    except (KeyError, IndexError, ValueError) as e:
-        print(f"Response parsing error: {e}", flush=True)
-        return "عذراً، واجهت مشكلة في معالجة الإجابة."
+    except Exception as e:
+        # ✅ معالج عام لالتقاط أي استثناء خفي وطباعته في السجلات فوراً
+        print(f"UNEXPECTED ERROR: {type(e).__name__}: {e}", flush=True)
+        return "عذراً، حدث خطأ غير متوقع."
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
