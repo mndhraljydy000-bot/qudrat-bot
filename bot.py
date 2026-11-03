@@ -28,9 +28,10 @@ app = Flask(__name__)
 
 def generate_gemini_response(prompt: str) -> str:
     """
-    استدعاء Gemini REST API مع التحقق التام من سلامة الاتصال.
+    استدعاء Gemini REST API باستخدام النموذج المحدث والطريقة القياسية.
     """
-    model_name = "gemini-2.5-flash"
+    # ✅ استخدام النموذج الجديد المعتمد من Google
+    model_name = "gemini-3.8-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     
     full_prompt = (
