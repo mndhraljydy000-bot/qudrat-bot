@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import random
 import requests
 
 # 🟢 إجبار تدفقات الإخراج على UTF-8
@@ -28,11 +30,9 @@ app = Flask(__name__)
 
 def generate_gemini_response(prompt: str) -> str:
     """
-    استدعاء Gemini REST API باستخدام النموذج المحدث والطريقة القياسية.
+    استدعاء Gemini REST API مع نظام إعادة المحاولة الذكية والتبديل التلقائي بين النماذج لتجاوز ضغط الخوادم (503).
     """
-    # ✅ استخدام النموذج الجديد المعتمد من Google
-    model_name = "gemini-3.8-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+    models_to_try = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.0-flash"]
     
     full_prompt = (
         f"{prompt}\n\n"
@@ -47,37 +47,55 @@ def generate_gemini_response(prompt: str) -> str:
         "Content-Type": "application/json; charset=utf-8",
         "x-goog-api-key": GEMINI_API_KEY
     }
-    
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=(10, 60))
+
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        print(f"Trying model: {model_name}", flush=True)
         
-        print(f"Gemini Status: {response.status_code}", flush=True)
-        print(f"Gemini Body: {response.text[:800]}", flush=True)
-        
-        response.raise_for_status()
-        data = response.json()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=60)
+                print(f"Gemini Status ({model_name}): {response.status_code}", flush=True)
+                
+                # إذا كان النموذج مزدحمًا (503)، انتظر وأعد المحاولة
+                if response.status_code == 503:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.uniform(0, 1)
+                        print(f"Model {model_name} is busy. Retrying in {wait_time:.1f}s...", flush=True)
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"Model {model_name} still busy after {max_retries} attempts. Switching model...", flush=True)
+                        break
+                
+                # إذا كان النموذج غير موجود (404)، انتقل فورًا للنموذج التالي
+                if response.status_code == 404:
+                    print(f"Model {model_name} not found. Switching...", flush=True)
+                    break
+                
+                response.raise_for_status()
+                data = response.json()
 
-        candidates = data.get("candidates", [])
-        if candidates and "content" in candidates[0]:
-            parts = candidates[0]["content"].get("parts", [])
-            if parts and "text" in parts[0]:
-                text = parts[0]["text"]
-                return text.replace('\u2022', '-').replace('•', '-')
+                candidates = data.get("candidates", [])
+                if candidates and "content" in candidates[0]:
+                    parts = candidates[0]["content"].get("parts", [])
+                    if parts and "text" in parts[0]:
+                        text = parts[0]["text"]
+                        return text.replace('\u2022', '-').replace('•', '-')
 
-        return "عذراً، لم أتمكن من صياغة إجابة."
+                return "عذراً، لم أتمكن من صياغة إجابة."
+                
+            except requests.exceptions.HTTPError:
+                print(f"HTTP Error on {model_name}. Switching...", flush=True)
+                break
+            except requests.exceptions.RequestException as e:
+                print(f"RequestException on {model_name}: {e}", flush=True)
+                if attempt == max_retries - 1:
+                    break
+                time.sleep(2 ** attempt)
 
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP Error {response.status_code}: {response.text}", flush=True)
-        return f"عذراً، حدث خطأ في الخدمة (رمز {response.status_code})."
-    except requests.exceptions.Timeout:
-        print("Request timed out after 60s", flush=True)
-        return "عذراً، استغرق الطلب وقتاً طويلاً. حاول مرة أخرى."
-    except requests.exceptions.RequestException as e:
-        print(f"RequestException: {type(e).__name__}: {e}", flush=True)
-        return "عذراً، حدث خطأ في الاتصال بالخدمة."
-    except Exception as e:
-        print(f"UNEXPECTED ERROR: {type(e).__name__}: {e}", flush=True)
-        return "عذراً، حدث خطأ غير متوقع."
+    return "عذراً، جميع النماذج مزدحمة حالياً. الرجاء المحاولة بعد قليل."
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
