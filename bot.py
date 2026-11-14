@@ -1,6 +1,7 @@
 import os
 import sys
 import base64
+import re
 import telebot
 from flask import Flask, request, abort
 from waitress import serve
@@ -25,6 +26,27 @@ app = Flask(__name__)
 supabase = create_client(SUPABASE_URL, SUPABASE_SECRET)
 
 
+def clean_telegram_text(text):
+    """إزالة رموز Markdown التي لا يدعمها تليجرام"""
+    if not text:
+        return ""
+    # إزالة العناوين ###
+    text = re.sub(r'#+\s*', '', text)
+    # إزالة النجمة المزدوجة والمفردة (Bold/Italic)
+    text = text.replace('**', '').replace('*', '')
+    # إزالة علامات المعادلات $$
+    text = text.replace('$$', '').replace('$', '')
+    # إزالة الشرطة السفلية (Italic)
+    text = text.replace('_', ' ')
+    # إزالة الخطوط الأفقية ---
+    text = re.sub(r'^-{3,}$', '', text, flags=re.MULTILINE)
+    # إزالة الشرطة العكسية
+    text = text.replace('\\', '')
+    # تقليل الأسطر الفارغة المتكررة
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 def search_similar_questions(query_text):
     try:
         response = supabase.rpc(
@@ -38,12 +60,20 @@ def search_similar_questions(query_text):
 
 
 def ask_gemini(user_text, similar_questions=None, image_b64=None):
-    prompt = "أنت خبير القدرات. أجب باللغة العربية الفصحى المبسطة، مع خطوات الحل.\n\n"
+    prompt = (
+        "أنت خبير القدرات السعودي. أجب باللغة العربية الفصحى المبسطة.\n"
+        "قواعد صارمة للتنسيق:\n"
+        "- لا تستخدم أي رموز ماركداون إطلاقاً (لا # ولا * ولا $ ولا _ ولا ---)\n"
+        "- لا تستخدم معادلات رياضية بصيغة LaTeX\n"
+        "- اكتب النص كأنك تكتب في واتساب: أسطر عادية، أرقام عربية، ونقاط بسيطة\n"
+        "- استخدم الكلمات (مثل: الإجابة، الشرح، ملاحظة) بدلاً من العناوين المزخرفة\n\n"
+    )
     if similar_questions:
-        prompt += "إليك أسئلة مشابهة من بنك الأسئلة للاستئناس:\n"
+        prompt += "إليك أسئلة مشابهة للاستئناس (لا تنسخها، فقط استفد من أسلوبها):\n"
         for q in similar_questions:
-            prompt += f"السؤال: {q['question_text']}\nالإجابة: {q['stored_answer']}\n---\n"
-    prompt += f"\nسؤال الطالب: {user_text}"
+            prompt += f"سؤال: {q['question_text']}\nإجابة: {q['stored_answer']}\n---\n"
+    prompt += f"\nسؤال الطالب: {user_text}\n\nاكتب الحل الآن:"
+
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         contents = [prompt]
@@ -57,7 +87,7 @@ def ask_gemini(user_text, similar_questions=None, image_b64=None):
             model="gemini-3.6-flash",
             contents=contents,
         )
-        return response.text
+        return clean_telegram_text(response.text)
     except Exception as e:
         print("Gemini Error:", e)
         return "عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي."
@@ -75,7 +105,7 @@ def handle_photo(message):
         file_info = bot.get_file(message.photo[-1].file_id)
         image_bytes = bot.download_file(file_info.file_path)
         image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-        caption = message.caption if message.caption else "حل السؤال الموجود في الصورة."
+        caption = message.caption if message.caption else "حل السؤال الموجود في الصورة واشرح خطوات الحل."
         response_text = ask_gemini(caption, image_b64=image_b64)
         bot.reply_to(message, response_text)
     except Exception as e:
