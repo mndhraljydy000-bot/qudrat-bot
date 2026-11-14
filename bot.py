@@ -1,6 +1,7 @@
 import os
 import sys
 import base64
+import re
 import telebot
 from flask import Flask, request, abort
 from waitress import serve
@@ -25,6 +26,16 @@ app = Flask(__name__)
 supabase = create_client(SUPABASE_URL, SUPABASE_SECRET)
 
 
+def fix_bidi(text):
+    """إصلاح اتجاه النص العربي داخل كتل <pre> لمنع انقلابه أو تفرقه"""
+    def process_pre(match):
+        content = match.group(1)
+        # إضافة LRM (\u200E) قبل وبعد الكلمات العربية لإجبار العرض بشكل صحيح
+        fixed_content = re.sub(r'([\u0600-\u06FF]+)', r'\u200E\1\u200E', content)
+        return f"<pre>{fixed_content}</pre>"
+    return re.sub(r'<pre>(.*?)</pre>', process_pre, text, flags=re.DOTALL)
+
+
 def search_similar_questions(query_text):
     try:
         response = supabase.rpc(
@@ -41,9 +52,10 @@ def ask_gemini(user_text, similar_questions=None, image_b64=None):
     prompt = (
         "أنت خبير القدرات السعودي. أجب باللغة العربية الفصحى المبسطة.\n\n"
         "قواعد التنسيق (مهمة جداً):\n"
-        "1. استخدم لغة HTML البسيطة التي يدعمها تليجرام: <b>للخط العريض</b> و <i>للمائل</i>.\n"
+        "1. استخدم لغة HTML البسيطة: <b>للخط العريض</b>.\n"
         "2. لا تستخدم أبداً رموز الماركداون مثل # أو ** أو $.\n"
-        "3. لعرض الكسور أو المعادلات الرياضية، استخدم وسم <pre> لإنشاء كتلة نصية (Code Block).\n"
+        "3. لعرض الكسور أو المعادلات الرياضية، استخدم وسم <pre> لإنشاء كتلة نصية.\n"
+        "4. يمكنك استخدام الحروف العربية (مثل ب ج، س، ص) داخل الكسور بأمان تام. النظام سيقوم بإصلاح اتجاه النص تلقائياً.\n"
         "مثال للكسر:\n"
         "<pre>\n"
         "  16       ب ج\n"
@@ -54,11 +66,11 @@ def ask_gemini(user_text, similar_questions=None, image_b64=None):
         "<pre>\n"
         "16 × 30 = 24 × ب ج\n"
         "</pre>\n"
-        "4. تأكد من محاذاة الأرقام داخل الـ <pre> باستخدام المسافات لتظهر ككسر حقيقي.\n\n"
+        "5. تأكد من محاذاة الأرقام والحروف داخل الـ <pre> باستخدام المسافات لتظهر ككسر حقيقي.\n\n"
     )
     
     if similar_questions:
-        prompt += "إليك أسئلة مشابهة للاستئناس (لا تنسخها، فقط استفد من أسلوبها):\n"
+        prompt += "إليك أسئلة مشابهة للاستئناس (لا تنسخها):\n"
         for q in similar_questions:
             prompt += f"سؤال: {q['question_text']}\nإجابة: {q['stored_answer']}\n---\n"
             
@@ -77,7 +89,7 @@ def ask_gemini(user_text, similar_questions=None, image_b64=None):
             model="gemini-3.6-flash",
             contents=contents,
         )
-        return response.text
+        return fix_bidi(response.text)
     except Exception as e:
         print("Gemini Error:", e)
         return "عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي."
