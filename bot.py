@@ -1,16 +1,15 @@
 import os
 import sys
 import base64
-import requests
 import telebot
 from flask import Flask, request, abort
 from waitress import serve
 from supabase import create_client
+from google import genai
+from google.genai import types
 
-# إجبار الترميز على UTF-8
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-# --- الإعدادات الأساسية ---
 BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -19,19 +18,17 @@ WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "qudrat_secret")
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 if not BOT_TOKEN or not GEMINI_API_KEY or not SUPABASE_URL:
-    raise ValueError("Missing required environment variables!")
+    raise ValueError("Missing environment variables!")
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
-
-# الاتصال بقاعدة البيانات
 supabase = create_client(SUPABASE_URL, SUPABASE_SECRET)
 
-# --- دالة البحث في Supabase (RAG) ---
+
 def search_similar_questions(query_text):
     try:
         response = supabase.rpc(
-            'search_qudrat_questions', 
+            'search_qudrat_questions',
             {'query_text': query_text, 'match_count': 3}
         ).execute()
         return response.data
@@ -39,42 +36,37 @@ def search_similar_questions(query_text):
         print("Search Error:", e)
         return []
 
-# --- دالة استدعاء Gemini ---
+
 def ask_gemini(user_text, similar_questions=None, image_b64=None):
     prompt = "أنت خبير القدرات. أجب باللغة العربية الفصحى المبسطة، مع خطوات الحل.\n\n"
-    
     if similar_questions:
         prompt += "إليك أسئلة مشابهة من بنك الأسئلة للاستئناس:\n"
         for q in similar_questions:
             prompt += f"السؤال: {q['question_text']}\nالإجابة: {q['stored_answer']}\n---\n"
-    
     prompt += f"\nسؤال الطالب: {user_text}"
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = {"Content-Type": "application/json"}
-    
-    parts = [{"text": prompt}]
-    if image_b64:
-        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
-    
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {"temperature": 0.3}
-    }
-    
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        return data['candidates'][0]['content']['parts'][0]['text']
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        contents = [prompt]
+        if image_b64:
+            image_part = types.Part.from_bytes(
+                data=base64.b64decode(image_b64),
+                mime_type="image/jpeg",
+            )
+            contents.append(image_part)
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=contents,
+        )
+        return response.text
     except Exception as e:
         print("Gemini Error:", e)
-        return "عذراً، حدث خطأ أثناء معالجة الإجابة."
+        return "عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي."
 
-# --- معالجات الرسائل ---
+
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     bot.reply_to(message, "أهلاً بك! أنا خبير القدرات. أرسل لي سؤالك نصاً أو صورة وسأحله لك فوراً. 🚀")
+
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -83,13 +75,13 @@ def handle_photo(message):
         file_info = bot.get_file(message.photo[-1].file_id)
         image_bytes = bot.download_file(file_info.file_path)
         image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-        
         caption = message.caption if message.caption else "حل السؤال الموجود في الصورة."
         response_text = ask_gemini(caption, image_b64=image_b64)
         bot.reply_to(message, response_text)
     except Exception as e:
         print("Photo Error:", e)
         bot.reply_to(message, "عذراً، حدث خطأ في معالجة الصورة.")
+
 
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
@@ -102,7 +94,7 @@ def handle_text(message):
         print("Text Error:", e)
         bot.reply_to(message, "عذراً، حدث خطأ في معالجة النص.")
 
-# --- إعداد Webhook ---
+
 @app.route(f"/{WEBHOOK_SECRET}", methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -111,9 +103,11 @@ def webhook():
         return '', 200
     abort(403)
 
+
 @app.route('/health')
 def health():
     return 'OK', 200
+
 
 if __name__ == "__main__":
     if RENDER_URL:
