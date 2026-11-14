@@ -7,7 +7,7 @@ from flask import Flask, request, abort
 from waitress import serve
 from supabase import create_client
 from google import genai
-from google.genai import types
+from google.genai import types, errors
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -27,10 +27,10 @@ supabase = create_client(SUPABASE_URL, SUPABASE_SECRET)
 
 
 def fix_bidi(text):
-    """إصلاح اتجاه النص العربي داخل كتل <pre> لمنع انقلابه أو تفرقه"""
+    """إصلاح اتجاه النص العربي داخل كتل <pre> باستخدام regex بسيط وآمن"""
     def process_pre(match):
         content = match.group(1)
-        # إضافة LRM (\u200E) قبل وبعد الكلمات العربية لإجبار العرض بشكل صحيح
+        # إضافة LRM (\u200E) قبل وبعد الكلمات العربية لإجبار العرض الصحيح
         fixed_content = re.sub(r'([\u0600-\u06FF]+)', r'\u200E\1\u200E', content)
         return f"<pre>{fixed_content}</pre>"
     return re.sub(r'<pre>(.*?)</pre>', process_pre, text, flags=re.DOTALL)
@@ -90,9 +90,19 @@ def ask_gemini(user_text, similar_questions=None, image_b64=None):
             contents=contents,
         )
         return fix_bidi(response.text)
+    except errors.ClientError as e:
+        if e.code == 429:
+            print(f"QUOTA EXHAUSTED: {e.message}")
+            return "عذراً، لقد استنفدت الحصة اليومية للذكاء الاصطناعي. يرجى المحاولة غداً أو استخدام مفتاح آخر."
+        else:
+            print(f"Client Error {e.code}: {e.message}")
+            return f"عذراً، حدث خطأ في الطلب ({e.code})."
+    except errors.ServerError as e:
+        print(f"Server Error {e.code}: {e.message}")
+        return "عذراً، خادم الذكاء الاصطناعي مشغول حالياً. يرجى المحاولة بعد قليل."
     except Exception as e:
-        print("Gemini Error:", e)
-        return "عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي."
+        print(f"Gemini Error: {e}")
+        return "عذراً، حدث خطأ غير متوقع أثناء الاتصال بالذكاء الاصطناعي."
 
 
 @bot.message_handler(commands=['start', 'help'])
