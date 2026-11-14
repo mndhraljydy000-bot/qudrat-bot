@@ -1,7 +1,6 @@
 import os
 import sys
 import base64
-import re
 import telebot
 from flask import Flask, request, abort
 from waitress import serve
@@ -26,27 +25,6 @@ app = Flask(__name__)
 supabase = create_client(SUPABASE_URL, SUPABASE_SECRET)
 
 
-def clean_telegram_text(text):
-    """إزالة رموز Markdown التي لا يدعمها تليجرام"""
-    if not text:
-        return ""
-    # إزالة العناوين ###
-    text = re.sub(r'#+\s*', '', text)
-    # إزالة النجمة المزدوجة والمفردة (Bold/Italic)
-    text = text.replace('**', '').replace('*', '')
-    # إزالة علامات المعادلات $$
-    text = text.replace('$$', '').replace('$', '')
-    # إزالة الشرطة السفلية (Italic)
-    text = text.replace('_', ' ')
-    # إزالة الخطوط الأفقية ---
-    text = re.sub(r'^-{3,}$', '', text, flags=re.MULTILINE)
-    # إزالة الشرطة العكسية
-    text = text.replace('\\', '')
-    # تقليل الأسطر الفارغة المتكررة
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-
 def search_similar_questions(query_text):
     try:
         response = supabase.rpc(
@@ -61,17 +39,29 @@ def search_similar_questions(query_text):
 
 def ask_gemini(user_text, similar_questions=None, image_b64=None):
     prompt = (
-        "أنت خبير القدرات السعودي. أجب باللغة العربية الفصحى المبسطة.\n"
-        "قواعد صارمة للتنسيق:\n"
-        "- لا تستخدم أي رموز ماركداون إطلاقاً (لا # ولا * ولا $ ولا _ ولا ---)\n"
-        "- لا تستخدم معادلات رياضية بصيغة LaTeX\n"
-        "- اكتب النص كأنك تكتب في واتساب: أسطر عادية، أرقام عربية، ونقاط بسيطة\n"
-        "- استخدم الكلمات (مثل: الإجابة، الشرح، ملاحظة) بدلاً من العناوين المزخرفة\n\n"
+        "أنت خبير القدرات السعودي. أجب باللغة العربية الفصحى المبسطة.\n\n"
+        "قواعد التنسيق (مهمة جداً):\n"
+        "1. استخدم لغة HTML البسيطة التي يدعمها تليجرام: <b>للخط العريض</b> و <i>للمائل</i>.\n"
+        "2. لا تستخدم أبداً رموز الماركداون مثل # أو ** أو $.\n"
+        "3. لعرض الكسور أو المعادلات الرياضية، استخدم وسم <pre> لإنشاء كتلة نصية (Code Block).\n"
+        "مثال للكسر:\n"
+        "<pre>\n"
+        "  16       ب ج\n"
+        " ---- =  -------\n"
+        "  24        30\n"
+        "</pre>\n"
+        "مثال للضرب التبادلي:\n"
+        "<pre>\n"
+        "16 × 30 = 24 × ب ج\n"
+        "</pre>\n"
+        "4. تأكد من محاذاة الأرقام داخل الـ <pre> باستخدام المسافات لتظهر ككسر حقيقي.\n\n"
     )
+    
     if similar_questions:
         prompt += "إليك أسئلة مشابهة للاستئناس (لا تنسخها، فقط استفد من أسلوبها):\n"
         for q in similar_questions:
             prompt += f"سؤال: {q['question_text']}\nإجابة: {q['stored_answer']}\n---\n"
+            
     prompt += f"\nسؤال الطالب: {user_text}\n\nاكتب الحل الآن:"
 
     try:
@@ -87,7 +77,7 @@ def ask_gemini(user_text, similar_questions=None, image_b64=None):
             model="gemini-3.6-flash",
             contents=contents,
         )
-        return clean_telegram_text(response.text)
+        return response.text
     except Exception as e:
         print("Gemini Error:", e)
         return "عذراً، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي."
@@ -95,7 +85,7 @@ def ask_gemini(user_text, similar_questions=None, image_b64=None):
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "أهلاً بك! أنا خبير القدرات. أرسل لي سؤالك نصاً أو صورة وسأحله لك فوراً. 🚀")
+    bot.reply_to(message, "أهلاً بك! أنا خبير القدرات. أرسل لي سؤالك نصاً أو صورة وسأحله لك فوراً. 🚀", parse_mode='HTML')
 
 
 @bot.message_handler(content_types=['photo'])
@@ -107,7 +97,7 @@ def handle_photo(message):
         image_b64 = base64.b64encode(image_bytes).decode('utf-8')
         caption = message.caption if message.caption else "حل السؤال الموجود في الصورة واشرح خطوات الحل."
         response_text = ask_gemini(caption, image_b64=image_b64)
-        bot.reply_to(message, response_text)
+        bot.reply_to(message, response_text, parse_mode='HTML')
     except Exception as e:
         print("Photo Error:", e)
         bot.reply_to(message, "عذراً، حدث خطأ في معالجة الصورة.")
@@ -119,7 +109,7 @@ def handle_text(message):
         bot.send_chat_action(message.chat.id, 'typing')
         similar = search_similar_questions(message.text)
         response_text = ask_gemini(message.text, similar_questions=similar)
-        bot.reply_to(message, response_text)
+        bot.reply_to(message, response_text, parse_mode='HTML')
     except Exception as e:
         print("Text Error:", e)
         bot.reply_to(message, "عذراً، حدث خطأ في معالجة النص.")
