@@ -27,11 +27,11 @@ supabase = create_client(SUPABASE_URL, SUPABASE_SECRET)
 
 
 def fix_bidi(text):
-    """إصلاح اتجاه النص العربي داخل كتل <pre> باستخدام regex بسيط وآمن"""
+    """إصلاح اتجاه النص العربي داخل كتل <pre>"""
     def process_pre(match):
         content = match.group(1)
-        # إضافة LRM (\u200E) قبل وبعد الكلمات العربية لإجبار العرض الصحيح
-        fixed_content = re.sub(r'([\u0600-\u06FF]+)', r'\u200E\1\u200E', content)
+        # إزالة حرف r من سلسلة التعويض لحل مشكلة bad escape \u
+        fixed_content = re.sub(r'([\u0600-\u06FF]+)', '\u200E\\1\u200E', content)
         return f"<pre>{fixed_content}</pre>"
     return re.sub(r'<pre>(.*?)</pre>', process_pre, text, flags=re.DOTALL)
 
